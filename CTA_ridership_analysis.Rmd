@@ -1,0 +1,1313 @@
+---
+title: "CTA Ridership"
+output: 
+  html_document:
+    keep_md: TRUE
+---
+## Description
+
+This R Markdown document uses the publically available CTA Data to analyze different trends through the ridership data. Each individual line for the CTA was looked at, as well as overall trends, to give insight into different facets of CTA ridership throughout the years.
+
+The data used is from two sources, and can be accessed at the following links:
+
+Ridership Data: https://data.cityofchicago.org/Transportation/CTA-Ridership-L-Station-Entries-Daily-Totals/5neh-572f
+
+Station Data: https://data.cityofchicago.org/Transportation/CTA-System-Information-List-of-L-Stops/8pix-ypme 
+
+
+```{r setup, include = FALSE}
+library(tidyverse)
+library(ggmap)
+library(lubridate)
+library(kableExtra)
+
+# save google key for maps API call
+google_key = Sys.getenv("google_key")
+register_google(key = google_key)
+
+# ridership data
+cta_data <- read_csv("CTA_-_Ridership_-__L__Station_Entries_-_Daily_Totals.csv")
+
+# data about each stop 
+stop_data <- read_csv("CTA_-_System_Information_-_List_of__L__Stops.csv")
+
+```
+
+#### Data Sources
+```{r original_data, echo = FALSE}
+# show first 5 rows of cta data
+head_cta <- head(cta_data)
+head_cta %>%
+  kbl() %>%
+  kable_styling()
+
+# show first 5 rows of stop data
+head(stop_data) %>%
+  kbl() %>%
+  kable_styling()
+```
+
+The data from the CTA involves two sources. The first one includes daily ride totals for each station. The other includes goelocation information about each stop.
+
+Both need some pre-processing before moving on to any analysis. For the ride data, a dataset for each line containing only relevant stops was created. Additionally, a dataset for yearly and monthly rides grouped by station name and day type (Weekend, Saturday, Sunday/Holiday) was created for future analysis. For the stop data, the coordinate locations feature was split into separate latitude and longitude variables for mapping. 
+
+```{r data_preprocess, echo = FALSE, message = FALSE, warning = FALSE}
+# create coordinate variables
+stop_data <- stop_data %>%
+  mutate(long = substring(Location, regexpr("-", Location)),
+         long_coord = substr(long, start = 1, stop = nchar(long) - 1),
+         lat = substr(Location, start = 2, stop = regexpr(",", Location) - 1),
+         lat = as.numeric(lat),
+         long_coord = as.numeric(long_coord))
+
+# purple line express
+p_exp <- stop_data %>%
+  filter(Pexp == TRUE) %>%
+  select(-STOP_NAME)
+
+p_exp <- distinct(p_exp, MAP_ID, .keep_all = TRUE) 
+
+p_exp <- p_exp %>%
+  mutate(order = ifelse(STATION_NAME == 'Linden', 1, 
+                 ifelse(STATION_NAME == 'Central', 10,
+                 ifelse(STATION_NAME == 'Noyes', 101, 
+                 ifelse(STATION_NAME == 'Foster', 102, 
+                 ifelse(STATION_NAME == 'Davis', 103, 
+                 ifelse(STATION_NAME == 'Dempster', 104, 
+                 ifelse(STATION_NAME == 'Main', 105, 
+                 ifelse(STATION_NAME == 'South Boulevard', 106, 
+                 ifelse(STATION_NAME == 'Howard', 107, 
+                 ifelse(STATION_NAME == 'Wilson', 108, 
+                 ifelse(STATION_NAME == 'Belmont', 109, 
+                 ifelse(STATION_NAME == 'Wellington', 110, 
+                 ifelse(STATION_NAME == 'Diversey', 111, 
+                 ifelse(STATION_NAME == 'Fullerton', 112, 
+                 ifelse(STATION_NAME == 'Armitage', 113, 
+                 ifelse(STATION_NAME == 'Sedgwick', 114, 
+                 ifelse(STATION_NAME == 'Chicago', 115, 
+                 ifelse(STATION_NAME == 'Merchandise Mart', 116, 
+                 ifelse(STATION_NAME == 'Clark/Lake', 117, 
+                 ifelse(STATION_NAME == 'State/Lake', 118, 
+                 ifelse(STATION_NAME == 'Washington/Wabash', 119, 
+                 ifelse(STATION_NAME == 'Adams/Wabash', 120, 
+                 ifelse(STATION_NAME == 'Harold Washington Library-State/Van Buren', 121, 
+                 ifelse(STATION_NAME == 'LaSalle/Van Buren', 122, 
+                 ifelse(STATION_NAME == 'Quincy/Wells', 123, 
+                 ifelse(STATION_NAME == 'Washington/Wells', 124, 'ERROR'))))))))))))))))))))))))))) %>%
+  arrange(order)
+
+# orange line 
+orange_line <- stop_data %>%
+  filter(O == TRUE) %>%
+  select(-STOP_NAME)
+
+orange_line <- distinct(orange_line, MAP_ID, .keep_all = TRUE) 
+
+orange_line <- orange_line %>%
+  mutate(order = ifelse(STATION_NAME == 'Midway', 1, 
+                 ifelse(STATION_NAME == 'Pulaski', 10, 
+                 ifelse(STATION_NAME == 'Kedzie', 101, 
+                 ifelse(STATION_NAME == 'Western', 102,
+                 ifelse(STATION_NAME == '35th/Archer', 103, 
+                 ifelse(STATION_NAME == 'Ashland', 104,
+                 ifelse(STATION_NAME == 'Halsted', 105, 
+                 ifelse(STATION_NAME == 'Roosevelt', 106,
+                 ifelse(STATION_NAME == 'Harold Washington Library-State/Van Buren', 107, 
+                 ifelse(STATION_NAME == 'LaSalle/Van Buren', 108, 
+                 ifelse(STATION_NAME == 'Quincy/Wells', 109, 
+                 ifelse(STATION_NAME == 'Washington/Wells', 110, 
+                 ifelse(STATION_NAME == 'Clark/Lake', 111, 
+                 ifelse(STATION_NAME == 'State/Lake', 112, 
+                 ifelse(STATION_NAME == 'Washington/Wabash', 113, 
+                 ifelse(STATION_NAME == 'Adams/Wabash', 114, 'Other'))))))))))))))))) %>%
+  arrange(order)
+
+# pink line 
+pink_line <- stop_data %>%
+  filter(Pnk == TRUE) %>%
+  select(-STOP_NAME)
+
+pink_line <- distinct(pink_line, MAP_ID, .keep_all = TRUE) 
+
+pink_line <- pink_line %>%
+  mutate(order = ifelse(STATION_NAME == "54th/Cermak", 1, 
+                 ifelse(STATION_NAME == "Cicero", 10, 
+                 ifelse(STATION_NAME == "Kostner", 101, 
+                 ifelse(STATION_NAME == "Pulaski", 102, 
+                 ifelse(STATION_NAME == "Central Park", 103, 
+                 ifelse(STATION_NAME == "Kedzie", 104, 
+                 ifelse(STATION_NAME == "California", 105,
+                 ifelse(STATION_NAME == "Western", 106, 
+                 ifelse(STATION_NAME == "Damen", 107, 
+                 ifelse(STATION_NAME == "18th", 108, 
+                 ifelse(STATION_NAME == "Polk", 109, 
+                 ifelse(STATION_NAME == "Ashland", 110, 
+                 ifelse(STATION_NAME == "Morgan", 111, 
+                 ifelse(STATION_NAME == "Clinton", 112, 
+                 ifelse(STATION_NAME == "Clark/Lake", 113, 
+                 ifelse(STATION_NAME == "State/Lake", 114, 
+                 ifelse(STATION_NAME == "Washington/Wabash", 115, 
+                 ifelse(STATION_NAME == "Adams/Wabash", 116, 
+                 ifelse(STATION_NAME == "Harold Washington Library-State/Van Buren", 117, 
+                 ifelse(STATION_NAME == "LaSalle/Van Buren", 118, 
+                 ifelse(STATION_NAME == "Quincy/Wells", 119, 
+                 ifelse(STATION_NAME == "Washington/Wells", 120, 'Other'))))))))))))))))))))))) %>%
+  arrange(order)
+
+# green line 
+green_line <- stop_data %>%
+  filter(G == TRUE) %>%
+  select(-STOP_NAME)
+
+green_line <- distinct(green_line, MAP_ID, .keep_all = TRUE) 
+
+green_line <- green_line %>%
+  mutate(order = ifelse(STATION_NAME == "Harlem/Lake", 1, 
+                 ifelse(STATION_NAME == "Oak Park", 10, 
+                 ifelse(STATION_NAME == "Ridgeland", 101, 
+                 ifelse(STATION_NAME == "Austin", 102, 
+                 ifelse(STATION_NAME == "Central", 103, 
+                 ifelse(STATION_NAME == "Laramie", 104, 
+                 ifelse(STATION_NAME == "Cicero", 105, 
+                 ifelse(STATION_NAME == "Pulaski", 106, 
+                 ifelse(STATION_NAME == "Conservatory", 107, 
+                 ifelse(STATION_NAME == "Kedzie", 108, 
+                 ifelse(STATION_NAME == "California", 109, 
+                 ifelse(STATION_NAME == "Ashland", 110, 
+                 ifelse(STATION_NAME == "Morgan", 111, 
+                 ifelse(STATION_NAME == "Clinton", 112, 
+                 ifelse(STATION_NAME == "Clark/Lake", 113, 
+                 ifelse(STATION_NAME == "State/Lake", 114, 
+                 ifelse(STATION_NAME == "Washington/Wabash", 115, 
+                 ifelse(STATION_NAME == "Adams/Wabash", 116, 
+                 ifelse(STATION_NAME == "Roosevelt", 117, 
+                 ifelse(STATION_NAME == "Cermak-McCormick Place", 118, 
+                 ifelse(STATION_NAME == "35th-Bronzeville-IIT", 119, 
+                 ifelse(STATION_NAME == "Indiana", 120, 
+                 ifelse(STATION_NAME == "43rd", 121, 
+                 ifelse(STATION_NAME == "47th", 122, 
+                 ifelse(STATION_NAME == "51st", 123,
+                 ifelse(STATION_NAME == "Garfield", 124,
+                 ifelse(STATION_NAME == "King Drive", 125,
+                 ifelse(STATION_NAME == "Cottage Grove", 126,
+                 ifelse(STATION_NAME == "Halsted", 127,
+                 ifelse(STATION_NAME == "Ashland/63rd", 128, 'Other'
+                        ))))))))))))))))))))))))))))))) %>%
+  arrange(order)
+
+# red line
+red_line <- stop_data %>%
+  filter(RED == TRUE) %>%
+  select(-STOP_NAME)
+
+red_line <- distinct(red_line, MAP_ID, .keep_all = TRUE) 
+
+red_line <- red_line %>%
+  mutate(order = ifelse(STATION_NAME == 'Howard', 1, 
+                 ifelse(STATION_NAME == 'Jarvis', 10, 
+                 ifelse(STATION_NAME == 'Morse', 101, 
+                 ifelse(STATION_NAME == 'Loyola', 102, 
+                 ifelse(STATION_NAME == 'Granville', 103, 
+                 ifelse(STATION_NAME == 'Thorndale', 104, 
+                 ifelse(STATION_NAME == 'Bryn Mawr', 105, 
+                 ifelse(STATION_NAME == 'Berwyn', 106, 
+                 ifelse(STATION_NAME == 'Argyle', 107, 
+                 ifelse(STATION_NAME == 'Lawrence', 108, 
+                 ifelse(STATION_NAME == 'Wilson', 109, 
+                 ifelse(STATION_NAME == 'Sheridan', 110, 
+                 ifelse(STATION_NAME == 'Addison', 111, 
+                 ifelse(STATION_NAME == 'Belmont', 112, 
+                 ifelse(STATION_NAME == 'Fullerton', 113, 
+                 ifelse(STATION_NAME == 'North/Clybourn', 114, 
+                 ifelse(STATION_NAME == 'Clark/Division', 115, 
+                 ifelse(STATION_NAME == 'Chicago', 116, 
+                 ifelse(STATION_NAME == 'Grand', 117, 
+                 ifelse(STATION_NAME == 'Lake', 118, 
+                 ifelse(STATION_NAME == 'Monroe', 119, 
+                 ifelse(STATION_NAME == 'Jackson', 120, 
+                 ifelse(STATION_NAME == 'Harrison', 121, 
+                 ifelse(STATION_NAME == 'Roosevelt', 122, 
+                 ifelse(STATION_NAME == 'Cermak-Chinatown', 123, 
+                 ifelse(STATION_NAME == 'Sox-35th', 124, 
+                 ifelse(STATION_NAME == '47th', 125, 
+                 ifelse(STATION_NAME == 'Garfield', 126, 
+                 ifelse(STATION_NAME == '63rd', 127, 
+                 ifelse(STATION_NAME == '69th', 128, 
+                 ifelse(STATION_NAME == '79th', 129, 
+                 ifelse(STATION_NAME == '87th', 130, 
+                 ifelse(STATION_NAME == '95th/Dan Ryan', 131, 'Other'))))))))))))))))))))))))))))))))),
+         order = as.numeric(order)) %>%
+  arrange(order)
+
+# blue line
+blue_line <- stop_data %>%
+  filter(BLUE == TRUE) %>%
+  select(-STOP_NAME)
+
+blue_line <- distinct(blue_line, MAP_ID, .keep_all = TRUE) 
+
+blue_line <- blue_line %>%
+  mutate(order = ifelse(STATION_NAME == "O'Hare", 1, 
+                 ifelse(STATION_NAME == 'Rosemont', 10, 
+                 ifelse(STATION_NAME == 'Cumberland', 101, 
+                 ifelse(STATION_NAME == 'Loyola', 102, 
+                 ifelse(STATION_DESCRIPTIVE_NAME == "Harlem (Blue Line - O'Hare Branch)", 103, 
+                 ifelse(STATION_NAME == 'Jefferson Park', 104, 
+                 ifelse(STATION_NAME == 'Montrose', 105, 
+                 ifelse(STATION_NAME == 'Irving Park', 106, 
+                 ifelse(STATION_NAME == 'Addison', 107, 
+                 ifelse(STATION_NAME == 'Belmont', 108, 
+                 ifelse(STATION_NAME == 'Logan Square', 109, 
+                 ifelse(STATION_NAME == 'California', 110, 
+                 ifelse(STATION_NAME == 'Addison', 111, 
+                 ifelse(STATION_NAME == 'Belmont', 112, 
+                 ifelse(STATION_DESCRIPTIVE_NAME == "Western (Blue Line - O'Hare Branch)", 113, 
+                 ifelse(STATION_NAME == 'Damen', 114, 
+                 ifelse(STATION_NAME == 'Division', 115, 
+                 ifelse(STATION_NAME == 'Chicago', 116, 
+                 ifelse(STATION_NAME == 'Grand', 117, 
+                 ifelse(STATION_NAME == 'Clark/Lake', 118, 
+                 ifelse(STATION_NAME == 'Washington', 119, 
+                 ifelse(STATION_NAME == 'Monroe', 120, 
+                 ifelse(STATION_NAME == 'Jackson', 121, 
+                 ifelse(STATION_NAME == 'LaSalle', 122, 
+                 ifelse(STATION_NAME == 'Clinton', 123, 
+                 ifelse(STATION_NAME == 'UIC-Halsted', 124, 
+                 ifelse(STATION_NAME == 'Racine', 125, 
+                 ifelse(STATION_NAME == 'Illinois Medical District', 126, 
+                 ifelse(STATION_DESCRIPTIVE_NAME == 'Western (Blue Line - Forest Park Branch)', 127, 
+                 ifelse(STATION_NAME == 'Kedzie-Homan', 128, 
+                 ifelse(STATION_NAME == 'Pulaski', 129, 
+                 ifelse(STATION_NAME == 'Cicero', 130, 
+                 ifelse(STATION_NAME == 'Austin', 131, 
+                 ifelse(STATION_NAME == "Oak Park", 132, 
+                 ifelse(STATION_DESCRIPTIVE_NAME == "Harlem (Blue Line - Forest Park Branch)", 133,
+                 ifelse(STATION_NAME == "Forest Park", 134, 'Other')))))))))))))))))))))))))))))))))))),
+         order = as.numeric(order)) %>%
+  arrange(order)
+
+# brown line
+brown_line <- stop_data %>%
+  filter(BRN == TRUE) %>%
+  select(-STOP_NAME)
+
+brown_line <- distinct(brown_line, MAP_ID, .keep_all = TRUE) 
+
+brown_line <- brown_line %>%
+  mutate(order = ifelse(STATION_NAME == 'Kimball', 1, 
+                 ifelse(STATION_NAME == 'Kedzie', 10, 
+                 ifelse(STATION_NAME == 'Francisco', 101, 
+                 ifelse(STATION_NAME == 'Rockwell', 102, 
+                 ifelse(STATION_NAME == 'Western', 103, 
+                 ifelse(STATION_NAME == 'Damen', 104, 
+                 ifelse(STATION_NAME == 'Montrose', 105, 
+                 ifelse(STATION_NAME == 'Irving Park', 106, 
+                 ifelse(STATION_NAME == 'Addison', 107, 
+                 ifelse(STATION_NAME == 'Paulina', 108, 
+                 ifelse(STATION_NAME == 'Southport', 109, 
+                 ifelse(STATION_NAME == 'Belmont', 110, 
+                 ifelse(STATION_NAME == 'Wellington', 111, 
+                 ifelse(STATION_NAME == 'Diversey', 112, 
+                 ifelse(STATION_NAME == 'Fullerton', 113, 
+                 ifelse(STATION_NAME == 'Armitage', 114, 
+                 ifelse(STATION_NAME == 'Sedgwick', 115, 
+                 ifelse(STATION_NAME == 'Chicago', 116, 
+                 ifelse(STATION_NAME == 'Merchandise Mart', 117, 
+                 ifelse(STATION_NAME == 'Washington/Wells', 118, 
+                 ifelse(STATION_NAME == 'Quincy/Wells', 119, 
+                 ifelse(STATION_NAME == 'LaSalle/Van Buren', 120, 
+                 ifelse(STATION_NAME == 'Harold Washington Library-State/Van Buren', 121, 
+                 ifelse(STATION_NAME == 'Adams/Wabash', 122, 
+                 ifelse(STATION_NAME == 'Washington/Wabash', 123, 
+                 ifelse(STATION_NAME == 'State/Lake', 124, 
+                 ifelse(STATION_NAME == 'Clark/Lake', 125, 'Other'))))))))))))))))))))))))))),
+         order = as.numeric(order)) %>%
+  arrange(order)
+
+# yellow line
+yellow_line <- stop_data %>%
+  filter(Y == TRUE) %>%
+  select(-STOP_NAME)
+
+yellow_line <- distinct(yellow_line, MAP_ID, .keep_all = TRUE) 
+
+yellow_line <- yellow_line %>%
+  mutate(order = ifelse(STATION_NAME == "Dempster-Skokie", 1, 
+                 ifelse(STATION_NAME == "Oakton-Skokie", 2, 
+                 ifelse(STATION_NAME == "Howard", 3, "Other"))),
+         order = as.numeric(order)) %>%
+  arrange(order)
+
+# monthly station totals 
+monthly_totals_sum <- cta_data %>%
+  mutate(date = mdy(date),
+         month = month(date),
+         year = year(date),
+         month_year = paste(month, year, sep = "_")) %>%
+group_by(station_id, stationname, year, month, daytype) %>%
+  summarise(num_days = n(),
+            total_rides = sum(rides),
+            avg_rides = round(total_rides/num_days, 0))
+
+# yearly station totals
+yearly_totals_sum <- monthly_totals_sum %>%
+  group_by(station_id, stationname, year, daytype) %>%
+  summarise(num_days = sum(num_days),
+            total_rides = sum(total_rides),
+            avg_rides = round(total_rides/num_days, 0)) %>%
+  group_by(station_id, stationname, year) %>%
+  mutate(proportion = total_rides/sum(total_rides))
+```
+
+### Entire 'L' System Map
+
+Before analyzing the data, we can use the coordinates provided in the stations dataset to plot a map of all the El lines. 
+
+```{r entire_map, echo = FALSE, warning=FALSE, message=FALSE}
+# get map using google API
+base_map_3 <- get_googlemap(center = c(-87.62, 41.95), zoom = 10, maptype = 'roadmap')
+
+# plot all the CTA lines using station coordinates on the map
+ggmap(base_map_3) + 
+  geom_point(aes(x = long_coord, y = lat), data = p_exp, size = 2, fill = "#522398") + 
+  geom_path(aes(x = long_coord, y = lat), data = p_exp, size = 1, color = '#522398') +
+  geom_point(aes(x = long_coord, y = lat), data = orange_line, size = 2, fill = "#f9461c") + 
+  geom_path(aes(x = long_coord, y = lat), data = orange_line, size = 1, color = '#f9461c') + 
+  geom_point(aes(x = long_coord, y = lat), data = pink_line, size = 2, fill = "#e27ea6") + 
+  geom_path(aes(x = long_coord, y = lat), data = pink_line, size = 1, color = '#e27ea6') + 
+  geom_point(aes(x = long_coord, y = lat), data = green_line, size = 2, fill = "#009b3a") + 
+  geom_path(aes(x = long_coord, y = lat), data = green_line, size = 1, color = '#009b3a') +
+  geom_point(aes(x = long_coord, y = lat), data = red_line, size = 2, fill = "#c60c30") + 
+  geom_path(aes(x = long_coord, y = lat), data = red_line, size = 1, color = '#c60c30') +
+  geom_path(aes(x = long_coord, y = lat, group = 1), data = blue_line, size = 1, color = "#00a1de") + 
+  geom_point(aes(x = long_coord, y = lat), data = blue_line, size = 1.5) +
+  geom_path(aes(x = long_coord, y = lat, group = 1), data = brown_line, size = 1, color = "#62361b") + 
+  geom_point(aes(x = long_coord, y = lat), data = brown_line, size = 1.5) +
+  geom_path(aes(x = long_coord, y = lat, group = 1), data = yellow_line, size = 1, color = "#f9e300") + 
+  geom_point(aes(x = long_coord, y = lat), data = yellow_line, size = 1.5) +
+  scale_x_continuous(limits = c(-87.95, -87.5)) + 
+  scale_y_continuous(limits = c(41.7, 42.1)) + 
+  labs(x = "", y = "") +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank())
+```
+
+As the stations in the loop are close together and difficult to see, the zoomed in map provides greater clarity. Some of the lines in the image below are inaccurate due to plotting straight lines between points - the map should rather be used to identify where loop stations are. 
+
+```{r loop_map, echo = FALSE, warning = FALSE, message=FALSE}
+# get a map of the loop using the google api
+base_map_4 <- get_googlemap(center = c(-87.63, 41.88), zoom = 15, maptype = 'roadmap')
+
+# plot all the cta lines on the loop map
+ggmap(base_map_4) + 
+  geom_point(aes(x = long_coord, y = lat), data = p_exp, size = 2, fill = "#522398") + 
+  geom_path(aes(x = long_coord, y = lat), data = p_exp, size = 1, color = '#522398') +
+  geom_point(aes(x = long_coord, y = lat), data = orange_line, size = 2, fill = "#f9461c") + 
+  geom_path(aes(x = long_coord, y = lat), data = orange_line, size = 1, color = '#f9461c') + 
+  geom_point(aes(x = long_coord, y = lat), data = pink_line, size = 2, fill = "#e27ea6") + 
+  geom_path(aes(x = long_coord, y = lat), data = pink_line, size = 1, color = '#e27ea6') + 
+  geom_point(aes(x = long_coord, y = lat), data = green_line, size = 2, fill = "#009b3a") + 
+  geom_path(aes(x = long_coord, y = lat), data = green_line, size = 1, color = '#009b3a') +
+  geom_point(aes(x = long_coord, y = lat), data = red_line, size = 2, fill = "#c60c30") + 
+  geom_path(aes(x = long_coord, y = lat), data = red_line, size = 1, color = '#c60c30') +
+  geom_path(aes(x = long_coord, y = lat, group = 1), data = blue_line, size = 1, color = "#00a1de") + 
+  geom_point(aes(x = long_coord, y = lat), data = blue_line, size = 1.5) +
+  geom_path(aes(x = long_coord, y = lat, group = 1), data = brown_line, size = 1, color = "#62361b") + 
+  geom_point(aes(x = long_coord, y = lat), data = brown_line, size = 1.5) +
+  geom_path(aes(x = long_coord, y = lat, group = 1), data = yellow_line, size = 1, color = "#f9e300") + 
+  geom_point(aes(x = long_coord, y = lat), data = yellow_line, size = 1.5) +
+  #scale_x_continuous(limits = c(-87.95, -87.5)) + 
+  #scale_y_continuous(limits = c(41.7, 42.1)) + 
+  labs(x = "", y = "") +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank())
+```
+
+Before diving into each line, we should also look at the total yearly ridership for each line. From this chart, we see that the Red and Blue lines are clearly the most popular CTA lines. They also are the only two lines that operate 24/7. We also see an overall growth trend, although in the last couple years it has tapered off for the more popular lines. 
+
+Note: for stations with multiple El lines, the number of rides at that station was equally divided up for each line. Belmont, for example, is served by the Red, Purple Line Express, and Brown Lines, and ridership totals for this station were evenly attributed to each line. As we have no way of knowing the exact proportions of passengers for each station with multiple lines, this was the fairest way to deal with multi-line stations.
+
+```{r yearly_totals, echo = FALSE, message = FALSE, warning = FALSE}
+stop_data_distinct <- distinct(stop_data, MAP_ID, .keep_all = TRUE)
+
+yearly_totals <- cta_data %>%
+  mutate(MAP_ID = station_id) %>%
+  left_join(stop_data_distinct, by = 'MAP_ID') %>%
+  mutate(date = mdy(date),
+         year = year(date),
+         num_lines_station = RED + BLUE + G + BRN + P + Pexp + Y + Pnk + O)
+
+
+yearly_totals_test <- yearly_totals %>%
+  gather('stationline', 'num_stations', RED:O)
+
+yearly_totals_test <- yearly_totals_test %>%
+  mutate(keep = ifelse(num_stations == TRUE, 1, 0)) %>%
+  filter(keep == 1) %>%
+  mutate(adj_rides = rides/num_lines_station)
+
+line_year_totals <- yearly_totals_test %>%
+  group_by(stationline, year) %>%
+  summarise(total_rides = sum(adj_rides, na.rm = TRUE),
+            avg_rides = mean(adj_rides, na.rm = TRUE))
+# move this plot somewhere else 
+ggplot(data = line_year_totals) + 
+  geom_line(aes(x = year, y = total_rides, color = stationline), size = 1.25) + 
+  scale_color_manual(values = c("#00a1de", "#62361b", "#009b3a", "#f9461c", "#522398", "Black", "#e27ea6", "#c60c30", "#f9e300")) + 
+  theme_minimal() +
+  labs(x = "",
+       y = "Yearly Ridership",
+       title = "CTA Yearly Ridership by Line") + 
+  scale_x_continuous(breaks = seq(2001, 2018, 4)) + 
+  scale_y_continuous(labels = scales::comma_format()) + 
+  theme(legend.title = element_blank())
+```
+
+## Deeper Look into Individual Lines 
+
+This section will go more in depth about each of the CTA lines, and any unique characteristics or findings that each may have. 
+
+### Purple Express 
+
+```{r purple_express, echo = FALSE, warning = FALSE, message = FALSE}
+ggmap(base_map_3) + 
+  geom_point(aes(x = long_coord, y = lat), data = p_exp, size = 2, fill = "#522398") + 
+  geom_path(aes(x = long_coord, y = lat), data = p_exp, size = 1, color = '#522398') +
+  scale_x_continuous(limits = c(-87.8, -87.4)) + 
+  scale_y_continuous(limits = c(41.8, 42.1)) + 
+  labs(x = "", y = "") +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank())
+  
+```
+
+The purple line express runs on weekdays during the rush hour period, and serves two functions:
+
+* Taking commuters from Evanston down into the city (and the reverse for Northwestern students)
+* Providing additional capacity on brown line stations from Belmont to the Loop
+
+As stations don't break out ridership by line for stations with multiple lines, it would be hard to identify anybody who specifically took the purple line express after getting on at Howard. Instead, can we find out how many riders, on average, use the Purple Line express to commute down into the city from Evanston?
+
+We can't measure this exactly, as we don't know where each rider exited, but we can provide an estimate using some assumptions:
+ * 75% of trips entering on an Evanston stop during the weekday are taking the train into the city, or Northwestern students returning to the city
+ * Rides are filtered to only occur during the Purple Line Express hours of operation 
+
+```{r purple_express_2, echo = FALSE}
+purple_rides <- yearly_totals_test %>%
+  filter(stationline == "Pexp" & stationname %in% c("Linden", "Central", "Noyes", "Foster", "Davis", "Dempster", "Main", "South Boulevard") & daytype == "W") %>%
+  mutate(month = month(date)) %>%
+  group_by(month) %>%
+  summarise(total_rides = sum(rides),
+            avg_rides = round(mean(rides), 0))
+
+ggplot(data = purple_rides) + 
+  geom_bar(aes(x = month, y = avg_rides), stat = "identity", fill = "#522398") + 
+  scale_x_continuous(breaks = seq(0, 12, 1)) + 
+  scale_y_continuous(breaks = c(0, 500, 1000, 1296, 1500), limits = c(0, 1500)) +
+  geom_hline(yintercept = 1296) + 
+  labs(x = "Month", 
+       y = "Average Purple Line Express Rides",
+       title = "Monthly Purple Line Express Volume",
+       caption = "Sourced from CTA ridership data") + 
+  theme_minimal()
+```
+
+The chart above shows the monthly Purple Line Express volumes for Evanston stations. Assuming that 75% of these rides fit the commuter criteria specified above, we can assume that approximately 1000 commuter rides are taken utilizing the purple line express each month. 
+
+We can also check to see if this has been increasing or decreasing for each year. 
+
+```{r purple_express_3, echo=FALSE, message = FALSE, warning = FALSE}
+purple_rides_year <- yearly_totals_test %>%
+  filter(stationline == "Pexp" & stationname %in% c("Linden", "Central", "Noyes", "Foster", "Davis", "Dempster", "Main", "South Boulevard") & daytype == "W") %>%
+  mutate(month = month(date)) %>%
+  group_by(year) %>%
+  summarise(total_rides = sum(rides),
+            avg_rides = round(mean(rides), 0))
+
+ggplot(data = purple_rides_year) + 
+  geom_line(aes(x = year, y = avg_rides), color = "#522398") + 
+  scale_y_continuous(limits = c(1000, 1400)) + 
+  theme_minimal() + 
+  labs(x = "",
+       y = "Average Monthly Purple Line Ridership",
+       title = "Monthly Avg. Purple Line Express Volume by Year") + 
+  geom_hline(yintercept = 1296)
+```
+
+As we can see from the chart above, there hasn't been any major shifts in purple line express volume over the years. Most years are close to the average value, and the trend is pretty similar to overall CTA ridership
+
+### Orange Line 
+
+```{r orange_line, echo = FALSE, warning = FALSE, message = FALSE}
+ggmap(base_map_3) + 
+  geom_point(aes(x = long_coord, y = lat), data = orange_line, size = 2, fill = "#f9461c") + 
+  geom_path(aes(x = long_coord, y = lat), data = orange_line, size = 1, color = '#f9461c') + 
+  scale_x_continuous(limits = c(-87.8, -87.4)) + 
+  scale_y_continuous(limits = c(41.7, 41.9)) + 
+  labs(x = "", y = "") +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank())
+```
+
+The terminus of the Orange Line is at Chicago's Midway Airport, providing passengers arriving with a quick option to get into the Loop. Since 2000, air traffic has grown at Midway due to an increased focus from Southwest Airlines. Has the number of passengers using the train from the Midway stop increased as well?
+
+We can start by first taking a look at the annual passenger traffic and CTA rides at Midway. 
+
+```{r orange_line_2, echo = FALSE, message=FALSE, warning=FALSE}
+midway_data <- data.frame("year" = c(2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018),
+                          "traffic" = c(15628886, 16959229, 18644372, 19718236, 17862838, 18868388, 19378855, 17345635, 17089365, 17676413, 18883170, 19516127, 20474552, 21179833, 22221499, 22677589, 22460236, 22027737))
+
+midway_data <- midway_data %>%
+  mutate(airport_growth = ((traffic - lag(traffic))/lag(traffic))*100)
+
+midway_stop_data <- yearly_totals_test %>%
+  filter(stationname == "Midway Airport") %>%
+  mutate(year = year(date)) %>%
+  group_by(year) %>%
+  summarise(total_rides = sum(rides)) %>%
+  mutate(cta_growth = ((total_rides - lag(total_rides))/lag(total_rides))*100)
+
+all_midway_rides <- midway_data %>%
+  left_join(midway_stop_data, by = "year") %>%
+  gather("type", "rides", traffic, total_rides) %>%
+  mutate(group = ifelse(type == "traffic", "Airport Traffic", "CTA Rides"))
+
+ggplot(data = all_midway_rides) + 
+  geom_bar(aes(x = year, y = rides, fill = group), position = "dodge", stat = "identity") +
+  theme_minimal() + 
+  labs(title = "Midway Airport and CTA Yearly Traffic",
+       x = "Year", 
+       y = "Volume",
+       caption = "Sourced from CTA ridership data and Midway traffic data") + 
+  theme(legend.title = element_blank()) + 
+  scale_y_continuous(breaks = seq(0, 30000000, 5000000), labels = scales::comma_format()) +   scale_x_continuous(breaks = seq(2001, 2018, 3), limits = c(2001, 2018))
+```
+
+The chart shows variation in the Airport passenger volume, however due to the relatively small number of CTA rides compared to the large number of airport passengers it is difficult to interpret any trends between the two. 
+
+Midway Airport Traffic Source: https://en.wikipedia.org/wiki/Midway_International_Airport#Airport_traffic
+
+Diving deeper, we can see if the ratio of Airport to CTA traffic has stayed the same. 
+
+```{r orange_line_3, echo = FALSE}
+all_midway_rides <- midway_data %>%
+  left_join(midway_stop_data, by = "year") %>%
+  mutate(proportion = round((total_rides/traffic)*100, 2))
+
+ggplot(data = all_midway_rides) + 
+  geom_line(aes(x = as.factor(year), y = proportion, group=1), color = "#f9461c") + 
+  scale_y_continuous(breaks = seq(0,16,2), limits = c(0,16)) + 
+  theme_minimal() + 
+  labs(x = "Year", 
+       y = "Proportion",
+       title = "Ratio of Airport Passengers to Midway CTA Rides",
+       caption = "Sourced from CTA ridership data and Midway traffic data") #+ 
+  scale_x_continuous(breaks = seq(2001, 2018, 3), limits = c(2001, 2018))
+```
+
+The chart above shows us that the overall ratio of CTA riders to Airport traffic has not seen a lot of variation -- between 2001 and 2018 it has stayed between 14 and 16. This means that there are approximately 14 to 16 airline passengers for every 1 CTA trip. However, after 2010 we see a consistent decline in the ratio for each year. This is driven by the constant increase in airport traffic in these years, while the number of CTA riders has stayed relatively constant. 
+
+Finally, another way to compare the two is to look at the year-over-year growth in volume. The chart below details the growth comparisons, allowing us to analyze relative volume shifts in both yearly numbers. We can see that the lines generally move together -- with any increase or decrease in Airport traffic growth, there is a following increase or decrease in CTA traffic growth. 
+
+```{r orange_line_4, echo = FALSE, warning = FALSE, message = FALSE}
+all_midway_growth <- midway_data %>%
+  left_join(midway_stop_data, by = "year") %>%
+  gather("type", "growth", airport_growth, cta_growth)
+
+ggplot(data = all_midway_growth) + 
+  geom_point(aes(x = year, y = growth, color = type)) + 
+  geom_smooth(aes(x = year, y = growth, color = type)) + 
+  labs(x = "Year", 
+       y = "Year-Over-Year Growth",
+       title = "Midway Airport Traffic and CTA Station Growth Comparison",
+       caption = "Sourced from CTA ridership data and Midway traffic data") + 
+  theme_minimal() + 
+  theme(legend.title = element_text(color = "white")) + 
+  geom_hline(aes(yintercept = 0)) + 
+  scale_y_continuous(labels = scales::percent_format(scale=1)) + 
+  scale_x_continuous(breaks = seq(2002, 2018, 3))
+
+```
+
+In summary, we can see that the CTA Ridership at the Midway Airport station is related to the Airport Traffic -- however the large increase in Airport Traffic since 2010 hasn't fully transferred over to such a large increase in CTA ridership. 
+
+
+### Pink Line
+
+```{r pink_line, echo = FALSE, warning = FALSE, message=FALSE}
+ggmap(base_map_3) + 
+  geom_point(aes(x = long_coord, y = lat), data = pink_line, size = 2, fill = "#e27ea6") + 
+  geom_path(aes(x = long_coord, y = lat), data = pink_line, size = 1, color = '#e27ea6') + 
+  scale_y_continuous(limits = c(41.8, 42)) + 
+  scale_x_continuous(limits = c(-87.8, -87.4)) + 
+  labs(x = "", y = "") +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank())
+
+
+```
+
+The pink line stretches west and slightly south from the Chicago loop. One of the newest lines, the Pink line began operation on what was a former blue line branch, and stretches west with both Green and Blue line branches. The Pink, Green and Blue line branches stretching west follow such a similar pattern that they share four of the same station names based on streets. Using the station coordinates, we can find out how close each of these stations are to each other.
+
+```{r haversine, echo = FALSE, warning = FALSE, message = FALSE}
+# define haversine function
+haversine <- function(long1, lat1, long2, lat2) {
+  rad <- pi/180
+  a1 <- lat1*rad
+  a2 <- long1*rad
+  b1 <- lat2*rad
+  b2 <- long2*rad
+  dlon <- b2 - a2
+  dlat <- b1 - a1
+  a <- (sin(dlat/2))^2 + cos(a1)*cos(b1)*(sin(dlon/2))^2
+  c <- 2*atan2(sqrt(a), sqrt(1 - a))
+  R <- 3691
+  d <- R*c
+  return(d)
+}
+
+# station list
+stations = c("Clinton", "Kedzie", "Pulaski", "Cicero")
+
+# find distance between each pink and green line station
+for(station in stations) {
+  pink = pink_line %>%
+    filter(STATION_NAME == station)
+  
+  green <- green_line %>%
+    filter(STATION_NAME == station)
+  
+  distance = haversine(pink$long_coord, pink$lat, green$long_coord, green$lat)
+  print(paste0("Green To Pink Line: ","Station: ",station, ", Distance: ",round(distance, 2), " Miles"))
+}
+
+# pink and blue
+for(station in stations) {
+  pink = pink_line %>%
+    filter(STATION_NAME == station)
+  
+  blue <- blue_line %>%
+    mutate(STATION_NAME = ifelse(STATION_NAME == "Kedzie-Homan", "Kedzie", STATION_NAME)) %>%
+    filter(STATION_NAME == station)
+  
+  distance = haversine(pink$long_coord, pink$lat, blue$long_coord, blue$lat)
+  print(paste0("Pink To Blue Line: ","Station: ",station, ", Distance: ",round(distance, 2), " Miles"))
+}
+
+# green and blue
+for(station in stations) {
+  green = green_line %>%
+    filter(STATION_NAME == station)
+  
+  blue <- blue_line %>%
+    mutate(STATION_NAME = ifelse(STATION_NAME == "Kedzie-Homan", "Kedzie", STATION_NAME)) %>%
+    filter(STATION_NAME == station)
+  
+  distance = haversine(green$long_coord, green$lat, blue$long_coord, blue$lat)
+  print(paste0("Green To Blue Line: ","Station: ",station, ", Distance: ",round(distance, 2), " Miles"))
+}
+```
+
+The pink line is approximately 1.5 miles away from the green line stations, and approximately 2 miles away from the blue line stations. Given that the routes are so similar, and are slightly offset north/south from each other, is there a line that is more popular for each of these similarly named stations?
+
+```{r pink_line_2, echo = FALSE, warning = FALSE, message = FALSE}
+# Clinton
+# Kedzie (Kedzie-homan for blue)
+# Pulaski
+# Cicero
+
+pink_filter <- pink_line %>%
+  filter(STATION_NAME %in% c("Clinton","Kedzie", "Pulaski","Cicero")) %>%
+  rename(station_id = MAP_ID) %>%
+  inner_join(yearly_totals_sum, by = "station_id") %>%
+  mutate(Line = ifelse(STATION_NAME == "Clinton", "Green/Pink", "Pink")) %>%
+  group_by(Line, STATION_NAME, year) %>%
+  summarise(total_rides = ifelse(Line == "Green/Pink", sum(total_rides)/2, sum(total_rides))) %>%
+  distinct(STATION_NAME, year, .keep_all = TRUE)
+
+green_filter <- green_line %>%
+  filter(STATION_NAME %in% c("Clinton", "Kedzie", "Pulaski", "Cicero")) %>%
+  rename(station_id = MAP_ID) %>%
+  inner_join(yearly_totals_sum, by = "station_id") %>%
+  mutate(Line = ifelse(STATION_NAME == "Clinton", "Green/Pink", "Green")) %>%
+  group_by(Line, STATION_NAME, year) %>%
+  summarise(total_rides = ifelse(Line == "Green/Pink", sum(total_rides)/2, sum(total_rides))) %>%
+  distinct(STATION_NAME, year, .keep_all = TRUE)
+
+blue_filter <- blue_line %>%
+  filter(STATION_NAME %in% c("Clinton", "Kedzie-Homan", "Pulaski", "Cicero")) %>%
+  rename(station_id = MAP_ID) %>%
+  inner_join(yearly_totals_sum, by = "station_id") %>%
+  mutate(STATION_NAME = ifelse(STATION_NAME == "Kedzie-Homan", "Kedzie", STATION_NAME)) %>%
+  mutate(Line = "Blue") %>%
+  group_by(Line, STATION_NAME, year) %>%
+  summarise(total_rides = sum(total_rides)) %>%
+  distinct(STATION_NAME, year, .keep_all = TRUE)
+
+combined_four = rbind(pink_filter, green_filter, blue_filter)
+
+total_combined <- combined_four %>%
+  group_by(STATION_NAME, Line) %>%
+  summarise(total_rides = sum(total_rides))
+options(scipen=999)
+ggplot(data = total_combined) + 
+  geom_bar(aes(x = STATION_NAME, y = total_rides, fill = Line), position = "dodge", stat = "identity") + 
+  scale_fill_manual(values = c("#00a1de", "#009b3a", "grey", "#e27ea6")) + 
+  scale_y_continuous(labels = scales::comma_format()) + 
+  theme_minimal() + 
+  labs(title = "Total Station Ridership by Line",
+       x = "Station Name",
+       y = "Total Station Ridership")
+```
+
+For the Clinton station, the Green and Pink lines share the station, so rides were grouped into a separate category for both for comparison. Unfortunately for the Pink line, it seems it has been the least popular option to reach the western parts of Chicago, at least for these 4 stations. 
+
+#### Green Line
+
+```{r green_line, echo = FALSE, warning = FALSE, message = FALSE}
+ggmap(base_map_3) + 
+  geom_point(aes(x = long_coord, y = lat), data = green_line, size = 2, fill = "#009b3a") + 
+  geom_path(aes(x = long_coord, y = lat), data = green_line, size = 1, color = '#009b3a') +
+  scale_x_continuous(limits = c(-87.85, -87.4)) + 
+  scale_y_continuous(limits = c(41.75, 42)) + 
+  labs(x = "", y = "") +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank())
+
+```
+
+One of the first charts made was the annual ridership by line. In there we see a large drop in ridership in 2013 on the Red Line. During this time, the southern part of the Red line was completely shut down for 5 months while the tracks were reubilt. We also see during this time a spike in ridership for the Green Line. Can we estimate how many of the riders impacted by the Red Line shutdown during this time were picked up by Green Line service?
+
+```{r green_line_2, echo = FALSE, warning=FALSE, message=FALSE}
+ggplot(data = line_year_totals) + 
+  geom_line(aes(x = year, y = total_rides, color = stationline), size = 1.25) + 
+  scale_color_manual(values = c("grey", "grey", "#009b3a", "grey", "grey", "grey", "grey", "#c60c30", "grey")) + 
+  theme_minimal() +
+  labs(x = "",
+       y = "Yearly Ridership",
+       title = "2013 Ridership Change For Green and Red Lines",
+       caption = "Sourced From CTA Ridership Data") + 
+  scale_x_continuous(breaks = seq(2001, 2018, 4)) + 
+  scale_y_continuous(labels = scales::comma_format()) + 
+  theme(legend.title = element_blank())
+```
+
+
+First, we need to estimate how many riders there would have been in 2013 for each line without any shutdown to service. To do so, we can average the year prior and the year after.
+
+```{r green_line_3, echo = FALSE, message=FALSE, warning=FALSE}
+# in 2013 red line was shut down
+# estimate how many riders switched from red to green during this time (how much of shutdown did green line pick up)
+# to do so need to estimate how many riders there would have been without construction or shutdowns (build lm to predict green and red ridership for 2013)
+# take difference in numbers for both and compare
+green_line$stationname <- green_line$STATION_NAME
+green_line_rides <- yearly_totals_sum %>%
+  inner_join(green_line, by = "stationname") %>%
+  filter(year %in% c(2012, 2013, 2014)) %>%
+  group_by(year) %>%
+  summarise(total_rides = sum(total_rides))
+
+green_2012 <- green_line_rides %>%
+  filter(year == 2012)
+
+green_2013 <- green_line_rides %>%
+  filter(year == 2013)
+
+green_2014 <- green_line_rides %>%
+  filter(year == 2014)
+
+print(paste("Green Line 2013 Estimated Riders:",mean(green_2012$total_rides, green_2014$total_rides)))
+print(paste("Green Line 2013 Actual Riders:",green_2013$total_rides))
+print(paste("Additional Green Line Riders in 2013:",green_2013$total_rides - mean(green_2012$total_rides, green_2014$total_rides)))
+
+red_line$stationname <- red_line$STATION_NAME
+red_line_rides <- yearly_totals_sum %>%
+  inner_join(red_line, by = "stationname") %>%
+  filter(year %in% c(2012, 2013, 2014)) %>%
+  group_by(year) %>%
+  summarise(total_rides = sum(total_rides))
+
+red_2012 <- red_line_rides %>%
+  filter(year == 2012)
+
+red_2013 <- red_line_rides %>%
+  filter(year == 2013)
+
+red_2014 <- red_line_rides %>%
+  filter(year == 2014)
+
+print(paste("Red Line 2013 Estimated Riders:",mean(red_2012$total_rides, red_2014$total_rides)))
+print(paste("Red Line 2013 Actual Riders:",red_2013$total_rides))
+print(paste("Decrease In Red Line Riders in 2013:",red_2013$total_rides - mean(red_2012$total_rides, red_2014$total_rides)))
+
+print(paste("Difference Between Red Line Loss and Green Line Gain:",486543 -5158601))
+
+```
+
+From the numbers above, we see that the Green Line gained close to 500,000 additional rides in 2013 than expected, likely due to the red line shutdown. While this seems like a lot, it actually only makes up about 10% of the Red line ridership lost due to track construction. The rest of the trips were made up in modes of transportation that aren't captured in this data - through shuttle buses, personal transport, or other bus lines.
+
+#### Red Line
+
+```{r red_line, echo = FALSE, warning = FALSE, message = FALSE}
+ggmap(base_map_3) + 
+  geom_path(aes(x = long_coord, y = lat, group = 1), data = red_line, size = 1, color = "#c60c30") + 
+  geom_point(aes(x = long_coord, y = lat), data = red_line, size = 1.5) + 
+  scale_y_continuous(limits = c(41.7, 42.05)) + 
+  scale_x_continuous(limits = c(-87.8, -87.4)) + 
+  labs(x = "", y = "") +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank())
+
+```
+
+The Red Line stretches from the north border of Chicago all the way down to 95th street, cutting through the heart of the Loop in the middle. As shown in the chart below, the Red Line sees by far and away the most passenger volume. 
+
+```{r red_line_2, echo = FALSE, message = FALSE, warning = FALSE}
+ggplot(data = line_year_totals) + 
+  geom_line(aes(x = year, y = total_rides, color = stationline), size = 1.25) + 
+  scale_color_manual(values = c("grey", "grey", "grey", "grey", "grey", "grey", "grey", "#c60c30", "grey")) + 
+  theme_minimal() +
+  labs(x = "",
+       y = "Yearly Ridership",
+       title = "CTA Red Line Consistently Has Highest Ridership",
+       caption = "Sourced from CTA Ridership Data") + 
+  scale_x_continuous(breaks = seq(2001, 2018, 4)) + 
+  scale_y_continuous(labels = scales::comma_format()) + 
+  theme(legend.title = element_blank())
+
+```
+
+This shouldn't come as a surprise when analyzing the stops near points of interest along the Red Line
+
+ * Addison (Wrigley Field)
+ * Sox - 35th Street (Chicago White Sox)
+ * Roosevelt (Soldier Field)
+ 
+In addition to this, the red line cuts through the heart of the loop, stretches north along densely populated residential neighborhoods, stops at the popular Chinatown neighborhood, and is one of two CTA lines to run 24/7.
+
+One thing about the Red Line that stands out about the red line is the abundance of stops on the northern half of the line, compared to the scarcity of stops south of the loop. From the northern terminus of Howard to the last stop north of the loop (Grand), there is a distance of approximately 9.4 miles (sourced from google maps). The trip takes 34 minutes, and there are 17 intermediate stops between Howard and Grand. When we look at the distance from the southern terminus of 95th street to the last stop south of the loop (Roosevelt), there is a similar of distance of approximately 10 miles (sourced from google maps). However, the trip takes 21 minutes by train, and there are only 8 intermediate stops. Can we look at the ridership data to determine if the ridership levels truly justify half the available stations over the same approximate distance? 
+
+```{r red_line_3, echo = FALSE}
+red_line <- red_line %>%
+  mutate(line_segment = ifelse(order <= 117, "North Branch",
+                        ifelse(order <= 121, "Loop", "South Branch")),
+         stationname = STATION_NAME)
+
+red_line_rides <- yearly_totals_sum %>%
+  inner_join(red_line, by = "stationname") %>%
+  group_by(year, line_segment) %>%
+  summarise(total_rides = sum(total_rides)) %>%
+  filter(line_segment != "Loop") %>% 
+  group_by(year) %>%
+  mutate(proportion = round(total_rides/lag(total_rides)*100, 1))
+
+red_line_graph <- red_line_rides %>%
+  filter(proportion > 0)
+
+ggplot(data = red_line_graph) + 
+  geom_line(aes(x = year, y = proportion), group = 1, color = "#c60c30") +
+  geom_hline(yintercept = 50) + 
+  scale_y_continuous(breaks = seq(0, 70, 10), limits = c(30, 70)) + 
+  theme_minimal() + 
+  labs(title = "Proportion of North Branch to South Branch Ridership",
+       x = "Year",
+       y = "Proportion",
+       caption = "Sourced from CTA ridership data")
+```
+
+If the south branch of the red line had half as many riders as the north branch, the proportion would be 50% - represented by the black line in the chart above. Instead, we see that the south branch consistently has more than 50%, represented in the red line in the chart. While the South Branch has 50% of the station capacity, it is consistently above that in terms of ridership, averaging around 60%.
+
+```{r, echo = FALSE}
+red_line_rides <- red_line_rides %>%
+  mutate(riders_per_station = ifelse(line_segment == "North Branch", total_rides/18, total_rides/9))
+
+ggplot(data = red_line_rides) + 
+  geom_line(aes(x = year, y = riders_per_station, group = line_segment, color = line_segment)) + 
+  labs(title = "Riders Per Station On Red Line",
+       x = "Year",
+       y = "Annual Riders Per Station") + 
+  theme_minimal() + 
+  theme(legend.title = element_blank()) +
+  scale_x_continuous(breaks = seq(2001,2018,4)) + 
+  scale_y_continuous(labels = scales::comma_format(), limits = c(0,1750000))
+```
+
+
+Another way to show this is by looking at yearly riders per station for both the south and north branch. The south branch consistently has more riders per station than the north branch, except for 2013 during construction.
+
+We can also look at the exact distances between stations on the north and south branches using the station GPS coordinates to show differences between the North and South branches.
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+north_branch <- red_line %>%
+  filter(line_segment == "North Branch")
+
+south_branch <- red_line %>%
+  filter(line_segment == "South Branch")
+
+print(paste("Distance between top and bottom of red line south branch:", round(haversine(
+  south_branch[1,]$long_coord,
+  south_branch[1,]$lat,
+  south_branch[10,]$long_coord,
+  south_branch[10,]$lat
+),2),"miles"))
+
+print(paste("Distance between top and bottom of red line north branch:", round(haversine(
+  north_branch[1,]$long_coord,
+  north_branch[1,]$lat,
+  north_branch[19,]$long_coord,
+  north_branch[19,]$lat
+),2),"miles"))
+
+print(paste("Average distance between stations on red line south branch:", round(9.34/9, 2), "miles"))
+print(paste("Average distance between stations on red line north branch:", round(8.48/19, 2), "miles"))
+
+# create data frame with lagged values for function
+south_branch_lag <- south_branch %>%
+   mutate(station_name_lag = lag(STATION_NAME),
+          long_coord_lag = lag(long_coord),
+          lat_lag = lag(lat)) %>%
+  filter(lat_lag != "NA")
+
+# get station names, initialize empty vector for values
+south_stations <- south_branch_lag$STATION_NAME
+sb_distances <- c()
+
+# function that calculates the distance between each station, prints out, saves to vector
+for(station in south_stations) {
+  south_branch_filter <- south_branch_lag %>%
+    filter(STATION_NAME == station)
+  distance = haversine(south_branch_filter$long_coord, 
+                       south_branch_filter$lat,
+                       south_branch_filter$long_coord_lag,
+                       south_branch_filter$lat_lag)
+  print(paste0("Stations: ", station, ", ", south_branch_filter$station_name_lag,
+               ", Distance: ",round(distance, 2), " Miles"))
+
+  sb_distances[station] <- distance
+}
+
+# convert vector to dataframe
+sb_distances <- as.data.frame(sb_distances)
+sb_distances <- sb_distances %>%
+  select(sb_distances) %>%
+  rename(distances = sb_distances) %>%
+  mutate(branch = "South Branch")
+
+# same for north branch
+# create data frame with lagged values for function
+north_branch_lag <- north_branch %>%
+   mutate(station_name_lag = lag(STATION_NAME),
+          long_coord_lag = lag(long_coord),
+          lat_lag = lag(lat)) %>%
+  filter(lat_lag != "NA")
+# get station names, initialize empty vector for values
+north_stations <- north_branch_lag$STATION_NAME
+nb_distances <- c()
+
+# function that calculates the distance between each station, prints out, saves to vector
+for(station in north_stations) {
+  north_branch_filter <- north_branch_lag %>%
+    filter(STATION_NAME == station)
+  distance = haversine(north_branch_filter$long_coord, 
+                       north_branch_filter$lat,
+                       north_branch_filter$long_coord_lag,
+                       north_branch_filter$lat_lag)
+  print(paste0("Stations: ", station, ", ", north_branch_filter$station_name_lag,
+               ", Distance: ",round(distance, 2), " Miles"))
+
+  nb_distances[station] <- distance
+}
+
+# convert vector to dataframe
+nb_distances <- as.data.frame(nb_distances)
+nb_distances <- nb_distances %>%
+  select(nb_distances) %>%
+  rename(distances = nb_distances) %>%
+  mutate(branch = "North Branch")
+
+combined_distances <- rbind(nb_distances, sb_distances)
+combined_distances <- combined_distances %>%
+  rownames_to_column()
+
+ggplot(data = combined_distances) + 
+  geom_point(aes(x = distances, y = branch, fill = branch), size =5, alpha = 0.5, color = "black", stroke=1, shape=21) +
+  geom_vline(xintercept = 0.49, linetype='dashed') + 
+  geom_vline(xintercept = 1.04, linetype="dashed") + 
+  scale_x_continuous(breaks = seq(0, 1.5, 0.25), limits = c(0,1.5)) + 
+  theme_minimal() + 
+  theme(legend.position = "none") + 
+  labs(x = "Distance Between Stations (Miles)",
+       y = "",
+       title = "Distances Between Stations On Red Line") + 
+  geom_label(aes(x = 0.49, y = "South Branch", label = "North Branch Mean"), vjust = -3.3) + 
+  geom_label(aes(x = 1.04, y = "South Branch", label = "South Branch Mean"), vjust = -3.3)
+
+
+```
+
+Looking at the distances between stations, we see that the average distance between stations for the south branch of the red line is double that of the distance between stations for the north branch of the red line. This is what we would expect to see, given that the branches are approximately the same length, but the South branch has half as many stations. Riders on the South branch likely have a larger distance to a station, given that stations are placed approximately 1 mile apart, compared to half a mile on the north branch.
+
+What the ridership data shows is that stations on the south branch of the Red Line do have a large demand of riders, while having less stations per rider than the north branch. We also can see from the locations of the stations that the The CTA and south branch residents would likely benefit from additional stations, as it would decrease the distance to a transit stop for riders. 
+
+#### Blue Line
+
+```{r blue_line, echo = FALSE, warning=FALSE, message=FALSE}
+ggmap(base_map_3) + 
+  geom_path(aes(x = long_coord, y = lat, group = 1), data = blue_line, size = 1, color = "#00a1de") + 
+  geom_point(aes(x = long_coord, y = lat), data = blue_line, size = 1.5) + 
+  scale_x_continuous(limits = c(-88, -87.4)) + 
+  scale_y_continuous(limits = c(41.8, 42.05)) + 
+  labs(x = "", y = "") +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank())
+
+
+```
+
+The CTA blue line cuts through some of the most in-demand neighborhoods, including Wicker Park and Logan Square. These neighborhoods have become very popular over the last decade or two, leading to an increased volume of CTA Blue Line riders. How does this increase compare relative to other CTA lines throughout the years?
+
+```{r blue_line_2, echo = FALSE}
+growth_years <- line_year_totals %>%
+  filter(year %in% c(2001, 2018)) %>%
+  group_by(stationline) %>%
+  mutate(difference = avg_rides - lag(avg_rides),
+         proportion = difference/lag(avg_rides)) %>%
+  filter(year == 2018)
+
+ggplot(data = growth_years) + 
+  geom_bar(aes(x = fct_reorder(stationline, -difference), y = difference, fill = stationline), stat = "identity") + 
+  theme_minimal() + 
+  labs(x = "CTA Line",
+       y = "Daily Average Ridership Difference",
+       title = "Daily Average Ridership Difference From 2001 - 2018",
+       caption = "Sourced from CTA ridership data") + 
+  scale_fill_manual(values = c("#00a1de", "grey", "grey", "grey", "grey", "grey", "grey", "grey", "grey")) + 
+  theme(legend.position = "none")
+```
+
+From 2001 to 2018, the CTA Blue Line saw an average daily ridership increase of approximately 1000 riders. This is approximately double that of other major lines, including the Brown, Pink, Red and Orange lines during this time period. 
+
+Anyone who has tried to get on a Blue Line rush hour train at Clark and Lake in the last few years has certainly felt the effects of this increase in ridership. The trains are normally packed to the brim, and delays are frequent. 
+
+
+
+#### Brown Line
+
+```{r brown_line, echo = FALSE, warning=FALSE, message=FALSE}
+ggmap(base_map_3) + 
+  geom_path(aes(x = long_coord, y = lat, group = 1), data = brown_line, size = 1, color = "#62361b") + 
+  geom_point(aes(x = long_coord, y = lat), data = brown_line, size = 1.5) +
+  scale_x_continuous(limits = c(-87.8, -87.4)) + 
+  scale_y_continuous(limits = c(41.8, 42)) + 
+  labs(x = "", y = "") +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank())
+
+```
+
+The brown line serves one of the most popular and fastest growing areas in Chicago, north from the loop near the lake, serving neighborhoods such as Lakeview, Lincoln Park and Old Town. The upper half of the brown line also serves highly populated areas, but ones that aren't necessarily as popular or growing as fast. Can we see any differences between the ridership growth in the different halves of the Brown Line?
+
+```{r echo = FALSE, warning = FALSE, message = FALSE}
+# before the loop (excluding shared stations of belmont and fullerton) there are 14 stations
+# top 7 vs bottom 7
+# look at growth
+# separate stations
+brown_line_stations <- c(1,10,101,102,103,104,105)
+brown_line_lower_stations <- c(106,107,108,109,115,116,117)
+
+# calculate the growth and total rides for each station
+brown_line_upper <- brown_line %>%
+  filter(order %in% brown_line_stations) %>%
+  rename(station_id = MAP_ID) %>%
+  inner_join(yearly_totals_sum, by = "station_id") %>%
+  group_by(STATION_NAME, year) %>%
+  summarise(total_rides = sum(total_rides)) %>%
+  mutate(total_rides_lag = lag(total_rides),
+         percent_growth = round(((total_rides-total_rides_lag)/total_rides_lag)*100, 2))
+
+# group by each station to find average growth and rides
+brown_line_upper_grouped <- brown_line_upper %>%
+  group_by(STATION_NAME) %>%
+  summarise(total_rides = sum(total_rides),
+            avg_perc_yearly_growth = mean(percent_growth, na.rm = TRUE),
+            median_perc_yearly_growth = median(percent_growth, na.rm = TRUE),
+            avg_total_rides = total_rides/18,
+            sd_growth = sd(percent_growth, na.rm = TRUE)) %>%
+  mutate(group = "brown")
+
+# calculate the growth and total rides for each station
+corridor <- brown_line %>%
+  filter(order %in% brown_line_lower_stations) %>%
+  rename(station_id = MAP_ID) %>%
+  inner_join(yearly_totals_sum, by = "station_id") %>%
+  group_by(STATION_NAME, year) %>%
+  summarise(total_rides = sum(total_rides)) %>%
+  mutate(total_rides_lag = lag(total_rides),
+         percent_growth = round(((total_rides-total_rides_lag)/total_rides_lag)*100, 2))
+
+# group by each station to find average growth and rides
+corridor_grouped <- corridor %>%
+  group_by(STATION_NAME) %>%
+  summarise(total_rides = sum(total_rides),
+            avg_perc_yearly_growth = mean(percent_growth, na.rm = TRUE),
+            median_perc_yearly_growth = median(percent_growth, na.rm = TRUE),
+            avg_total_rides = total_rides/18,
+            sd_growth = sd(percent_growth, na.rm = TRUE)) %>%
+  mutate(group = "corridor")
+
+# combine sets together
+combined_grouped <- rbind(corridor_grouped, brown_line_upper_grouped)
+
+# remove stations that are also connected to red line
+combined_grouped <- combined_grouped %>%
+  filter(STATION_NAME != c("Fullerton", "Belmont"))
+
+# plot data
+ggplot() + 
+  geom_point(aes(x = avg_total_rides, y = median_perc_yearly_growth), color = "dark green", data = brown_line_upper_grouped) + 
+  geom_point(aes(x = avg_total_rides, y = median_perc_yearly_growth), color = "blue", data = corridor_grouped) + 
+  geom_smooth(aes(x = avg_total_rides, y = median_perc_yearly_growth), method = "lm", data = brown_line_upper_grouped, color = "dark green", se=F) +
+  geom_smooth(aes(x = avg_total_rides, y = median_perc_yearly_growth), method = "lm", data = corridor_grouped, se=F) + 
+  geom_text(aes(x = avg_total_rides, y = median_perc_yearly_growth, label = STATION_NAME), size = 3, vjust = -1.2, data = brown_line_upper_grouped) + 
+  geom_text(aes(x = avg_total_rides, y = median_perc_yearly_growth, label = STATION_NAME), size = 3, vjust = -1.1, data = corridor_grouped) +
+  geom_hline(yintercept = 0, linetype = "dotted") + 
+  theme_minimal() + 
+  scale_y_continuous(labels = scales::percent_format(scale = 1), limits = c(-1.7, 4.5), breaks = seq(-2,4,1)) + 
+  scale_x_continuous(labels = scales::comma_format(), limits = c(380000,1900000),
+                     breaks = seq(400000,2000000,400000)) + 
+  labs(x = "Average Yearly Ridership",
+       y = "Median Yearly Growth",
+       title = "Growth and Ridership For Brown Line Stations",
+       subtitle = "Split Into Stations On The Northern and Southern Part")
+
+```
+
+ There are two trends emerging with the brown line. For the lower half of the stations outside of the loop, they all have a positive yearly median ridership growth. This also increases with station size, with merchandise mart and addison being the two outliers. For stations on the upper half, the trend is opposite. As the station yearly ridership increases, the median yearly growth decreases. Fullerton and Belmont were omitted from this as they both also have connections to the red line. 
+ 
+ 
+#### Yellow Line
+
+```{r yellow, echo = FALSE, message=FALSE, warning=FALSE}
+ggmap(base_map_3) + 
+  geom_path(aes(x = long_coord, y = lat, group = 1), data = yellow_line, size = 1, color = "#f9e300") + 
+  geom_point(aes(x = long_coord, y = lat), data = yellow_line, size = 1.5) + 
+  scale_x_continuous(limits = c(-87.9, -87.4)) + 
+  scale_y_continuous(limits = c(41.9, 42.1)) + 
+  labs(x = "", y = "") +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text.y = element_blank())
+```
+
+The CTA Yellow line serves mainly as a commuter line for Skokie. The yellow line terminates at the Howard station, allowing for transfers to the Red and Purple lines to take down into the city. While this is a very convinient option for many weekday commuters, it means the line mainly goes unused on the weekends. How does this compare to average for weekday/weekend?
+
+```{r yellow_line_2, echo = FALSE, warning = FALSE, message = FALSE}
+station_totals <- yearly_totals_sum %>%
+  group_by(stationname, daytype) %>%
+  summarise(total_rides = sum(total_rides),
+            num_days = sum(num_days)) %>%
+  mutate(avg_rides = round(total_rides/num_days, 0),
+         proportion = round((total_rides/sum(total_rides))*100, 1)) %>%
+  filter(daytype == "W")
+
+ggplot(data = station_totals) + 
+  geom_density(aes(x = proportion), binwidth = 1, fill = "grey", alpha = .5) + 
+  geom_point(aes(x = 82.7, y = .1065), color = "#f9e300") + 
+  geom_point(aes(x = 85, y = .087), color = "#f9e300") + 
+  theme_minimal() + 
+  labs(x = "Station Weekday Ridership Proportion",
+       y = "Density",
+       title = "Distribution of Station Weekday Ridership Proportion",
+       caption = "Sourced from CTA ridership data") + 
+  scale_x_continuous(limits = c(70, 100), breaks = seq(70, 100, 10), labels = scales::percent_format(scale = 1)) + 
+  scale_y_continuous(breaks = seq(0, .12, .02), labels = scales::percent_format()) + 
+  annotate("text", x = 88, y = .087, label = "Oakton-Skokie") + 
+  annotate("text", x = 86.5, y = .1065, label = "Dempster-Skokie") + 
+  theme(panel.grid.minor = element_blank()) 
+```
+
+The chart above shows that the two Yellow Line stations are actually both around average in terms of the proportion of total rides that are on weekdays. The Dempster stop is on par with the majority of stops at around 83%, while the Oakton stop is slightly higher at 85%. 
+
+### Aggregated CTA Metrics 
+```{r find_monthly_totals, echo = FALSE, message = FALSE, warning = FALSE}
+daytype_totals <- yearly_totals_sum %>%
+  group_by(year, daytype) %>%
+  summarise(total_rides = sum(total_rides), 
+            average_rides = round(mean(avg_rides),0)) %>%
+  group_by(year) %>%
+  mutate(proportion = total_rides/sum(total_rides),
+         daytype = ifelse(daytype == "W", "Weekday", 
+                   ifelse(daytype == "U", "Sunday/Holiday", "Saturday")))
+
+ggplot(data = daytype_totals) + 
+  geom_line(aes(x = year, y = average_rides, color = daytype)) + 
+  scale_x_continuous(breaks = seq(2001, 2018, 2)) + 
+  scale_y_continuous(breaks = seq(0, 5000, 1000), limits = c(0, 5000)) + 
+  theme_minimal() +
+  labs(x = "",
+       y = "Average Daily Rides",
+       title = "Average Ridership is Increasing Over Time",
+       caption = "Sourced from CTA ridership data")
+  
+ggplot(data = daytype_totals) + 
+  geom_bar(aes(x = year, y = proportion, fill = daytype), stat = "identity", position = "stack") + 
+  scale_x_continuous(breaks = seq(2001, 2018, 2)) + 
+  scale_y_continuous(breaks = seq(0, 1, .1), limits = c(0, 1), labels = scales::percent_format()) + 
+  theme_minimal() + 
+  labs(x = "",
+       y = "Proportion of Total Rides", 
+       title = "Over 80% of CTA Rides Occur on Weekdays",
+       caption = "Sourced from CTA ridership data")
+
+
+```
+
+-- Feature Backlog --
+
+### Shiny app 
+- filter to time ranges/weekdays, select stations to view and ridership
+
+### Pick out individual stops with large increase/decrease
+- tell story for what happened
+
+### Type of Day
+- which stops are popular on weekends vs weekday commuter stops, which see largest difference
+
+### Commuter Lines
+- what lines are used more than others on weekends/weekdays 
+
+### Addison Stop
+- saturdays with game, saturdays without game 
+- build a model to predict if there was a game that day 
+
+### Distance to Transit
+- for each chicago zip code, take the median coordinate and find the min distance to an L stop. Find the highest population zip codes far away from transit. Look at differences between north, south and west sides.
